@@ -1,0 +1,14 @@
+{
+  "tf-a": "origin/v2.14-stm32mp-valid",
+  "optee_os": "origin/4.8.0-stm32mp-valid",
+  "u-boot": "origin/v2026.04-stm32mp-valid",
+  "linux-stm32": "origin/v6.18-stm32mp-valid",
+  "tests-mpu": "origin/master-6.18",
+  "dt-stm32mp": "origin/v7-stm32mp-valid",
+  "SCP-firmware": "origin/v2.16.0-stm32mp-dev",
+  "trusted-firmware-m": "origin/v2.1.0-stm32mp-dev",
+  "tf-m-tests": "origin/v2.1.0-stm32mp-dev",
+  "tf-m-extras": "origin/v2.1.0-stm32mp-dev",
+  "stm32mp2-low-power": "origin/main",
+  "lava-tests": "origin/master "
+}

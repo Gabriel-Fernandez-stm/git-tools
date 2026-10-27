@@ -1,0 +1,14 @@
+#!/bin/bash
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+if [ -f /tmp/env.sh ]; then
+    rm /tmp/env.sh
+fi
+
+python3 "$SCRIPT_DIR/git-repo.py" "$@"
+
+# Sourced (". git-repo") so that the "Go" action can change the current directory.
+if [ -f /tmp/env.sh ]; then
+    source /tmp/env.sh
+fi

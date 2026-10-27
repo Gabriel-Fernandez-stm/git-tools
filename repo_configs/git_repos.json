@@ -1,0 +1,142 @@
+[
+	{
+		"component": "tf-a",
+		"surname": [
+			"tfa"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/st/tf-a",
+		"hooks": "scp -p -O -P 29418 ${USER}@gerrit.st.com:hooks/commit-msg tf-a/.git/hooks/"
+	},
+	{
+		"component": "optee_os",
+		"surname": [
+			"optee"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/optee/optee_os",
+		"hooks": "scp -p -O -P 29418 ${USER}@gerrit.st.com:hooks/commit-msg optee_os/.git/hooks/"
+	},
+	{
+		"component": "u-boot",
+		"surname": [
+			"uboot"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/st/u-boot",
+		"hooks": "scp -p -O -P 29418 ${USER}@gerrit.st.com:hooks/commit-msg u-boot/.git/hooks/"
+	},
+	{
+		"component": "linux-stm32",
+		"surname": [
+			"kernel",
+			"linux"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/st/linux-stm32",
+		"hooks": "scp -p -O -P 29418 ${USER}@gerrit.st.com:hooks/commit-msg linux-stm32/.git/hooks/"
+	},
+	{
+		"component": "tests-mpu",
+		"surname": [
+			"tests-mpu"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/st/tests-mpu",
+		"hooks": "scp -p -O -P 29418 ${USER}@gerrit.st.com:hooks/commit-msg tests-mpu/.git/hooks/"
+	},
+	{
+		"component": "dt-stm32mp",
+		"surname": [
+			"dt-stm32mp"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/st/dt-stm32mp",
+		"hooks": "scp -p -O -P 29418 ${USER}@gerrit.st.com:hooks/commit-msg dt-stm32mp/.git/hooks/"
+	},
+	{
+		"component": "SCP-firmware",
+		"surname": [
+			"SCP",
+			"scp-firmware"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/optee/SCP-firmware",
+		"hooks": "scp -p -O -P 29418 ${USER}@gerrit.st.com:hooks/commit-msg SCP-firmware/.git/hooks/"
+	},
+	{
+		"component": "trusted-firmware-m",
+		"surname": [
+			"tfm",
+			"Tf-m"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/st/TF-M/trusted-firmware-m",
+		"hooks": "scp -p -O -P 29418 ${USER}@gerrit.st.com:hooks/commit-msg trusted-firmware-m/.git/hooks/"
+	},
+	{
+		"component": "tf-m-tests",
+		"surname": [
+			"tf-m-tests"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit-mirror.gnb.st.com:29418/mpu/oe/st/TF-M/tf-m-tests"
+	},
+	{
+		"component": "tf-m-extras",
+		"surname": [
+			"tf-m-extras"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/st/TF-M/tf-m-extras"
+	},
+	{
+		"component": "stm32mp2-low-power",
+		"surname": [
+			"stm32mp2-low-power"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/mpu/oe/st/TF-M/stm32mp2-low-power"
+	},
+	{
+		"component": "lava-tests",
+		"surname": [
+			"lava",
+			"lava-tests"
+		],
+		"repo_type": "stm32 development",
+		"url": "ssh://${USER}@gerrit.st.com:29418/oeivi/test/lava/lava-tests"
+	},
+	{
+		"component": "arm-trusted-firmware.git",
+		"surname": [
+			"tfa"
+		],
+		"repo_type": "upstream development",
+		"url": "https://github.com/ARM-software/arm-trusted-firmware.git"
+	},
+	{
+		"component": "optee_os.git",
+		"surname": "optee",
+		"repo_type": "upstream development",
+		"url": "https://github.com/OP-TEE/optee_os.git"
+	},
+	{
+		"component": "u-boot.git",
+		"surname": "uboot",
+		"repo_type": "upstream development",
+		"url": "https://github.com/OP-TEE/uboot.git"
+	},
+	{
+		"component": "linux-next.git",
+		"surname": "kernel",
+		"repo_type": "upstream development",
+		"url": "https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git"
+	},
+	{
+		"component": "stm32.git",
+		"surname": "stm32",
+		"repo_type": "upstream development",
+		"url": "https://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32.git"
+	}
+]

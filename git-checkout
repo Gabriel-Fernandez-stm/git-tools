@@ -1,0 +1,504 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+git_checkout.py
+
+Checkout de tags Git pour plusieurs dépôts à partir d'une source fournie
+par un fichier de configuration ou via --tags. La source peut être :
+  - un fichier JSON
+  - une chaîne JSON inline
+  - un texte inline au format "repo tag" par ligne
+
+Le script travaille depuis le répertoire courant, où chaque clé/nom de dépôt
+correspond à un sous-répertoire dépôt Git.
+
+Si le répertoire courant est déjà dans un dépôt Git dont le nom figure dans la
+liste des dépôts, le checkout est effectué uniquement dans ce dépôt.
+
+Usage:
+        git_checkout.py (<config> | --tags <source>) [-j <jobs>] [-b <branch>] [--dry-run] [--verbose]
+  git_checkout.py (-h | --help)
+
+Options:
+    <config>                  Nom d'un fichier JSON dans tags-configs (sans .json),
+                             ou chemin vers un fichier JSON
+    --tags <source>           Source des tags :
+                             - fichier JSON
+                             - JSON inline
+                             - texte inline "repo tag" par ligne
+  -j <jobs> --jobs=<jobs>    Nombre de dépôts à traiter en parallèle [default: 1]
+  -b <branch> --branch=<branch>
+                             Crée ou repositionne une branche locale sur le tag
+  --dry-run                  Simule fetch/checkout, mais vérifie réellement les dépôts Git
+  --verbose                  Affiche davantage de détails
+  -h --help                  Affiche cette aide
+
+Exemples:
+  git_checkout.py v6-dev
+  git_checkout.py v6-valid
+  git_checkout.py ~/toto/xxx.json
+  git_checkout.py --tags=tags.json
+  git_checkout.py --tags='{"tf-a":"refs/tags/v2.14-stm32mp-26-07-17-preint2"}'
+  git_checkout.py --tags=$'tf-a refs/tags/v2.14-stm32mp-26-07-17-preint2\noptee_os refs/tags/4.8.0-stm32mp-26-07-17-preint5'
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from pathlib import Path
+from threading import Lock
+from typing import Dict, List, Optional, Sequence
+
+from docopt import docopt
+
+
+PRINT_LOCK = Lock()
+
+
+def safe_print(*args, **kwargs) -> None:
+    with PRINT_LOCK:
+        print(*args, **kwargs)
+
+
+@dataclass
+class CommandResult:
+    ok: bool
+    stdout: str = ""
+    stderr: str = ""
+    returncode: int = 0
+    command: List[str] = field(default_factory=list)
+
+    @property
+    def outputs(self) -> List[str]:
+        items = []
+        if self.stdout:
+            items.append(self.stdout)
+        if self.stderr:
+            items.append(self.stderr)
+        return items
+
+
+@dataclass
+class RepoResult:
+    repo: str
+    ok: bool
+    message: str
+    details: List[str] = field(default_factory=list)
+
+
+class GitCheckoutError(Exception):
+    pass
+
+
+def command_to_str(cmd: Sequence[str]) -> str:
+    return " ".join(cmd)
+
+
+def run_cmd(
+    cmd: Sequence[str],
+    cwd: Path,
+    *,
+    dry_run: bool = False,
+    simulate: bool = False,
+) -> CommandResult:
+    cmd_list = list(cmd)
+
+    if dry_run and simulate:
+        return CommandResult(
+            ok=True,
+            stdout=f"[DRY-RUN] {command_to_str(cmd_list)}",
+            stderr="",
+            returncode=0,
+            command=cmd_list,
+        )
+
+    try:
+        completed = subprocess.run(
+            cmd_list,
+            cwd=str(cwd),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return CommandResult(
+            ok=(completed.returncode == 0),
+            stdout=(completed.stdout or "").strip(),
+            stderr=(completed.stderr or "").strip(),
+            returncode=completed.returncode,
+            command=cmd_list,
+        )
+    except Exception as exc:
+        return CommandResult(
+            ok=False,
+            stdout="",
+            stderr=str(exc),
+            returncode=255,
+            command=cmd_list,
+        )
+
+
+def normalize_tag(tag_ref: str) -> str:
+    prefix = "refs/tags/"
+    if tag_ref.startswith(prefix):
+        return tag_ref[len(prefix):]
+    return tag_ref
+
+
+def parse_tag_mapping_object(data: object) -> Dict[str, str]:
+    if not isinstance(data, dict):
+        raise GitCheckoutError("Le JSON doit être un objet de type {repo: tag}")
+
+    result: Dict[str, str] = {}
+    for repo, tag in data.items():
+        if not isinstance(repo, str) or not repo.strip():
+            raise GitCheckoutError(f"Nom de dépôt invalide: {repo!r}")
+        if not isinstance(tag, str) or not tag.strip():
+            raise GitCheckoutError(f"Tag invalide pour {repo!r}: {tag!r}")
+        result[repo.strip()] = tag.strip()
+
+    return result
+
+
+def parse_json_text(content: str) -> Dict[str, str]:
+    try:
+        data = json.loads(content)
+    except Exception as exc:
+        raise GitCheckoutError(f"JSON invalide: {exc}") from exc
+    return parse_tag_mapping_object(data)
+
+
+def parse_plain_text(content: str) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+
+    for lineno, raw_line in enumerate(content.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            continue
+
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            raise GitCheckoutError(
+                f"Ligne {lineno} invalide: format attendu 'repo tag', obtenu: {raw_line!r}"
+            )
+
+        repo, tag = parts[0].strip(), parts[1].strip()
+
+        if not repo:
+            raise GitCheckoutError(f"Ligne {lineno}: nom de dépôt vide")
+        if not tag:
+            raise GitCheckoutError(f"Ligne {lineno}: tag vide")
+        if repo in result:
+            raise GitCheckoutError(f"Ligne {lineno}: dépôt dupliqué: {repo}")
+
+        result[repo] = tag
+
+    if not result:
+        raise GitCheckoutError("Aucune entrée repo/tag trouvée")
+
+    return result
+
+
+def load_tags_source(source: str) -> Dict[str, str]:
+    source = source.strip()
+
+    source_path = Path(source).expanduser()
+    if source_path.exists() and source_path.is_file():
+        try:
+            content = source_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            raise GitCheckoutError(f"Impossible de lire {source_path}: {exc}") from exc
+
+        stripped = content.lstrip()
+        if source_path.suffix.lower() == ".json" or stripped.startswith("{"):
+            return parse_json_text(content)
+        return parse_plain_text(content)
+
+    stripped = source.lstrip()
+    if stripped.startswith("{"):
+        return parse_json_text(source)
+
+    return parse_plain_text(source)
+
+
+def is_git_repo(repo_dir: Path) -> CommandResult:
+    return run_cmd(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=repo_dir,
+        dry_run=False,
+        simulate=False,
+    )
+
+
+def add_result_details(details: List[str], cmd_result: CommandResult, verbose: bool) -> None:
+    if verbose:
+        details.append(f"$ {command_to_str(cmd_result.command)}")
+    for item in cmd_result.outputs:
+        if item:
+            details.append(item)
+
+
+def process_repo(
+    base_dir: Path,
+    repo_name: str,
+    tag_ref: str,
+    *,
+    branch: Optional[str],
+    dry_run: bool,
+    verbose: bool,
+) -> RepoResult:
+    repo_dir = base_dir / repo_name
+
+    if not repo_dir.is_dir():
+        return RepoResult(
+            repo=repo_name,
+            ok=False,
+            message=f"Ce n'est pas un répertoire: {repo_dir}",
+        )
+
+    details: List[str] = []
+
+    tag = normalize_tag(tag_ref)
+
+    fetch_result = run_cmd(
+        ["git", "fetch", "--tags", "--force", "--prune"],
+        cwd=repo_dir,
+        dry_run=dry_run,
+        simulate=True,
+    )
+    add_result_details(details, fetch_result, verbose)
+
+    if not fetch_result.ok:
+        return RepoResult(
+            repo=repo_name,
+            ok=False,
+            message="git fetch --tags a échoué",
+            details=details,
+        )
+
+    if branch:
+        checkout_cmd = ["git", "checkout", "-B", branch, tag]
+        action_msg = f"branche locale '{branch}' créée/repositionnée sur '{tag}'"
+    else:
+        checkout_cmd = ["git", "checkout", tag]
+        action_msg = f"checkout sur tag '{tag}'"
+
+    checkout_result = run_cmd(
+        checkout_cmd,
+        cwd=repo_dir,
+        dry_run=dry_run,
+        simulate=True,
+    )
+    add_result_details(details, checkout_result, verbose)
+
+    if not checkout_result.ok:
+        return RepoResult(
+            repo=repo_name,
+            ok=False,
+            message=f"{command_to_str(checkout_cmd)} a échoué",
+            details=details,
+        )
+
+    return RepoResult(
+        repo=repo_name,
+        ok=True,
+        message=action_msg,
+        details=details,
+    )
+
+
+def parse_jobs(value: str) -> int:
+    try:
+        jobs = int(value)
+    except ValueError as exc:
+        raise GitCheckoutError("--jobs doit être un entier") from exc
+
+    if jobs < 1:
+        raise GitCheckoutError("--jobs doit être >= 1")
+
+    return jobs
+
+
+def print_result(result: RepoResult) -> None:
+    if result.ok:
+        safe_print(f"[OK] {result.repo}: {result.message}")
+    else:
+        safe_print(f"[ERREUR] {result.repo}: {result.message}")
+
+    for detail in result.details:
+        for line in detail.splitlines():
+            safe_print(f"    {line}")
+
+    safe_print()
+
+
+def discover_git_repos(base_dir: Path) -> List[str]:
+    """Découvre tous les répertoires qui sont des repos git dans base_dir."""
+    git_repos = []
+
+    try:
+        for item in base_dir.iterdir():
+            if not item.is_dir():
+                continue
+
+            git_check = is_git_repo(item)
+            if git_check.ok and git_check.stdout.strip() == "true":
+                git_repos.append(item.name)
+    except Exception as exc:
+        safe_print(f"Avertissement: Erreur lors de la découverte des repos: {exc}", file=sys.stderr)
+
+    return sorted(git_repos)
+
+
+def find_current_repo_root(cwd: Path) -> Optional[Path]:
+    """Retourne la racine du dépôt git contenant cwd, ou None si on n'est pas dans un dépôt."""
+    result = run_cmd(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=cwd,
+        dry_run=False,
+        simulate=False,
+    )
+    if not result.ok or not result.stdout:
+        return None
+    return Path(result.stdout)
+
+
+def print_summary(results: List[RepoResult]) -> None:
+    success = sorted(r.repo for r in results if r.ok)
+    failed = sorted(r.repo for r in results if not r.ok)
+
+    safe_print("Résumé")
+    safe_print("------")
+    safe_print(f"Succès : {len(success)}")
+    for repo in success:
+        safe_print(f"  - {repo}")
+
+    safe_print(f"Échecs : {len(failed)}")
+    for repo in failed:
+        safe_print(f"  - {repo}")
+
+
+def main() -> int:
+    args = docopt(__doc__)
+
+    try:
+        tags_source = args["--tags"]
+        config = args["<config>"]
+        if config is not None:
+            config = config.strip()
+            if Path(config).suffix.lower() != ".json":
+                config = str(
+                    Path(__file__).resolve().parent
+                    / "tags-configs"
+                    / f"{config}.json"
+                )
+            tags_source = str(Path(config).expanduser())
+
+        if not tags_source:
+            raise GitCheckoutError(
+                "Source tags manquante. Utiliser <config> ou --tags <source>."
+            )
+
+        jobs = parse_jobs(args["--jobs"])
+        branch = args["--branch"]
+        dry_run = bool(args["--dry-run"])
+        verbose = bool(args["--verbose"])
+
+        repo_tags = load_tags_source(tags_source)
+    except GitCheckoutError as exc:
+        print(f"Erreur: {exc}", file=sys.stderr)
+        return 1
+
+    base_dir = Path.cwd()
+
+    safe_print(f"Répertoire de base: {base_dir}")
+    safe_print(f"Source tags       : {tags_source}")
+    safe_print(f"Jobs              : {jobs}")
+    safe_print(f"Dry-run           : {'oui' if dry_run else 'non'}")
+    safe_print(f"Verbose           : {'oui' if verbose else 'non'}")
+    safe_print(f"Branche locale    : {branch if branch else '(aucune)'}")
+    safe_print()
+
+    # Si on est déjà dans un repo git présent dans la liste, ne traiter que celui-ci
+    current_root = find_current_repo_root(base_dir)
+    if current_root is not None and current_root.name in repo_tags:
+        base_dir = current_root.parent
+        items = [(current_root.name, repo_tags[current_root.name])]
+        safe_print(f"Dépôt courant détecté: {current_root}")
+        safe_print("Checkout limité à ce dépôt.")
+        safe_print()
+    else:
+        # Découvrir les repos git
+        git_repos = discover_git_repos(base_dir)
+        safe_print(f"Repos git découverts: {len(git_repos)}")
+        for repo in git_repos:
+            safe_print(f"  - {repo}")
+        safe_print()
+
+        # Construire la liste à traiter: repos git qui sont dans le JSON
+        items = []
+        for repo_name in git_repos:
+            if repo_name in repo_tags:
+                items.append((repo_name, repo_tags[repo_name]))
+
+    if not items:
+        safe_print("Aucun repo git trouvé qui soit dans la liste des tags.")
+        safe_print()
+        print_summary([])
+        return 0
+
+    safe_print(f"Repos à traiter: {len(items)}")
+    for repo_name, tag_ref in items:
+        safe_print(f"  - {repo_name} -> {tag_ref}")
+    safe_print()
+
+    results: List[RepoResult] = []
+
+    if jobs == 1:
+        for repo_name, tag_ref in items:
+            safe_print(f"==> Traitement de {repo_name} -> {tag_ref}")
+            result = process_repo(
+                base_dir,
+                repo_name,
+                tag_ref,
+                branch=branch,
+                dry_run=dry_run,
+                verbose=verbose,
+            )
+            results.append(result)
+            print_result(result)
+    else:
+        future_to_repo = {}
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            for repo_name, tag_ref in items:
+                safe_print(f"==> Soumission de {repo_name} -> {tag_ref}")
+                future = executor.submit(
+                    process_repo,
+                    base_dir,
+                    repo_name,
+                    tag_ref,
+                    branch=branch,
+                    dry_run=dry_run,
+                    verbose=verbose,
+                )
+                future_to_repo[future] = repo_name
+
+            safe_print()
+
+            for future in as_completed(future_to_repo):
+                result = future.result()
+                results.append(result)
+                print_result(result)
+
+    print_summary(results)
+    return 0 if all(r.ok for r in results) else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
